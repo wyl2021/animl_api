@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const catController = require('../controllers/catController');
+const { authenticate } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 
@@ -16,11 +17,19 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// 猫咪相关路由
-router.post('/cats', upload.single('image'), catController.createCat);
-router.get('/cats', catController.getCats);
-router.get('/cats/:id', catController.getCatById);
-router.put('/cats/:id', upload.single('image'), catController.updateCat);
-router.delete('/cats/:id', catController.deleteCat);
+// 公开路由（不需要token验证）
+router.get('/cats/public/hot', catController.getHotCats);
+router.get('/cats/public/latest', catController.getLatestAdoption);
+router.get('/cats/public/:id', catController.getCatById);
+
+// 需要token验证的路由
+router.get('/cats', authenticate, catController.getCats);
+router.get('/cats/:id', authenticate, catController.getCatById);
+router.post('/cats', authenticate, upload.single('image'), catController.createCat);
+router.put('/cats/:id', authenticate, upload.single('image'), catController.updateCat);
+router.delete('/cats/:id', authenticate, catController.deleteCat);
+router.post('/cats/:id/like', authenticate, catController.likeCat);
+router.delete('/cats/:id/like', authenticate, catController.unlikeCat);
+router.put('/cats/:id/adoption', authenticate, catController.updateAdoptionStatus);
 
 module.exports = router;

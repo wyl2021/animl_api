@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const postController = require('../controllers/postController');
+const { authenticate } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 
@@ -16,11 +17,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// 帖子相关路由
-router.post('/posts', upload.single('image'), postController.createPost);
-router.get('/posts', postController.getPosts);
-router.get('/posts/:id', postController.getPostById);
-router.put('/posts/:id', upload.single('image'), postController.updatePost);
-router.delete('/posts/:id', postController.deletePost);
+// 帖子相关路由（全部需要token验证）
+router.get('/posts', authenticate, postController.getPosts);
+router.get('/posts/:id', authenticate, postController.getPostById);
+router.post('/posts', authenticate, upload.single('image'), postController.createPost);
+router.put('/posts/:id', authenticate, upload.single('image'), postController.updatePost);
+router.delete('/posts/:id', authenticate, postController.deletePost);
 
 module.exports = router;
