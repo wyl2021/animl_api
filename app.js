@@ -6,6 +6,7 @@ const catRoutes = require('./routes/catRoutes');
 const postRoutes = require('./routes/postRoutes');
 const likeRoutes = require('./routes/likeRoutes');
 const commentRoutes = require('./routes/commentRoutes');
+const encyclopediaRoutes = require('./routes/encyclopediaRoutes');
 const commentController = require('./controllers/commentController');
 const { authenticate } = require('./middleware/authMiddleware');
 require('dotenv').config();
@@ -31,6 +32,7 @@ app.use('/api', catRoutes);
 app.use('/api', postRoutes);
 app.use('/api', likeRoutes);
 app.use('/api', commentRoutes);
+app.use('/api', encyclopediaRoutes);
 
 // 直接处理帖子评论请求
 app.get('/api/posts/:id/comments', authenticate, commentController.getCommentsByPostId);

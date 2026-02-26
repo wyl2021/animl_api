@@ -59,19 +59,31 @@ exports.createPost = async (req, res) => {
 // 获取帖子列表
 exports.getPosts = async (req, res) => {
   try {
-    console.log('进入 getPosts 方法');
     const userId = req.user?.id || null;
-    console.log('用户ID:', userId);
+
+    // 获取分页参数
+    console.log('req.query:', req.query);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    console.log('分页参数:', { page, limit, offset });
 
     // 测试简单查询，不涉及用户表
-    console.log('执行简单查询');
     const [rows] = await pool.execute(`
       SELECT p.*, '测试用户' as user_name, '小黑' as cat_name, '孟买猫' as cat_breed
       FROM posts p
       ORDER BY p.created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
     `);
 
+    // 查询帖子总数
+    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM posts');
+    const total = countResult[0].total;
+    const totalPages = Math.ceil(total / limit);
+
     console.log('查询结果数量:', rows.length);
+    console.log('帖子总数:', total);
+    console.log('总页数:', totalPages);
 
     // 为每个帖子添加必要的字段
     rows.forEach(post => {
@@ -79,8 +91,24 @@ exports.getPosts = async (req, res) => {
       post.user_avatar = null;
     });
 
-    console.log('返回响应');
-    res.status(200).json(rows);
+    console.log('返回响应:', {
+      posts: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    });
+    res.status(200).json({
+      posts: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    });
   } catch (error) {
     console.error('Error in getPosts:', error.message);
     res.status(500).json({ error: error.message });
