@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const postController = require('../controllers/postController');
+const commentController = require('../controllers/commentController');
 const { authenticate } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
@@ -20,7 +21,9 @@ const upload = multer({ storage: storage });
 // 帖子相关路由（全部需要token验证）
 router.get('/posts', authenticate, postController.getPosts);
 router.get('/posts/:id', authenticate, postController.getPostById);
-router.post('/posts', authenticate, upload.single('image'), postController.createPost);
+router.get('/posts/:id/comments', authenticate, commentController.getCommentsByPostId);
+router.post('/posts', authenticate, postController.createPost); // 用于处理没有文件上传的情况
+router.post('/posts/image', authenticate, upload.single('image'), postController.createPost); // 用于处理有文件上传的情况
 router.put('/posts/:id', authenticate, upload.single('image'), postController.updatePost);
 router.delete('/posts/:id', authenticate, postController.deletePost);
 

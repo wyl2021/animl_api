@@ -95,6 +95,8 @@ async function initDatabase() {
         title VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
         image VARCHAR(255),
+        video VARCHAR(255),
+        images JSON,
         likes_count INT DEFAULT 0,
         comments_count INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

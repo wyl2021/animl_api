@@ -67,7 +67,8 @@ exports.createComment = async (req, res) => {
 // 获取帖子的评论列表
 exports.getCommentsByPostId = async (req, res) => {
   try {
-    const { post_id } = req.params;
+    // 支持从post_id或id参数获取帖子ID
+    const postId = req.params.post_id || req.params.id;
     const userId = req.user?.id || null;
 
     let query = `
@@ -78,7 +79,7 @@ exports.getCommentsByPostId = async (req, res) => {
       ORDER BY c.created_at DESC
     `;
 
-    const [rows] = await pool.execute(query, [post_id]);
+    const [rows] = await pool.execute(query, [postId]);
 
     // 如果用户登录，查询评论的点赞状态
     if (userId && rows.length > 0) {
