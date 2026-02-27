@@ -288,3 +288,52 @@ exports.deletePost = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+// 获取当前用户的帖子
+exports.getMyPosts = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    // 获取分页参数
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.pageSize) || 10;
+    const offset = (page - 1) * limit;
+
+    if (!userId) {
+      return res.status(401).json({ error: '请登录' });
+    }
+
+    // 查询当前用户的帖子
+    const [rows] = await pool.execute(`
+      SELECT p.*, '测试用户' as user_name, '小黑' as cat_name, '孟买猫' as cat_breed
+      FROM posts p
+      WHERE p.user_id = ?
+      ORDER BY p.created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `, [userId]);
+
+    // 查询帖子总数
+    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM posts WHERE user_id = ?', [userId]);
+    const total = countResult[0].total;
+    const totalPages = Math.ceil(total / limit);
+
+    // 为每个帖子添加必要的字段
+    rows.forEach(post => {
+      post.isLiked = false;
+      post.user_avatar = null;
+    });
+
+    res.status(200).json({
+      posts: rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    });
+  } catch (error) {
+    console.error('Error in getMyPosts:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+};

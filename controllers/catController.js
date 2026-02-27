@@ -7,8 +7,8 @@ exports.createCat = async (req, res) => {
     const image = req.file ? req.file.filename : null;
     const user_id = req.user?.id || 1; // 默认使用ID为1的用户
     const [result] = await pool.execute(
-      'INSERT INTO cats (name, breed, age, age_display, description, adoption_requirements, image, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, breed, age, age_display, description, adoption_requirements, image, user_id]
+      'INSERT INTO cats (name, breed, age, age_display, description, adoption_requirements, image, user_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, breed, age, age_display, description, adoption_requirements, image, user_id, 'pending']
     );
     res.status(201).json({
       id: result.insertId,
@@ -20,6 +20,7 @@ exports.createCat = async (req, res) => {
       adoption_requirements,
       image,
       user_id,
+      status: 'pending',
       user_name: req.user?.name || '管理员'
     });
   } catch (error) {
@@ -37,9 +38,22 @@ exports.getCats = async (req, res) => {
     let query = 'SELECT c.*, u.name as user_name FROM cats c LEFT JOIN users u ON c.user_id = u.id';
     let params = [];
 
+    // 构建WHERE子句
+    let whereClause = [];
+
+    // 只显示已审核通过的猫咪
+    whereClause.push('c.status = ?');
+    params.push('approved');
+
+    // 添加领养状态过滤
     if (status) {
-      query += ' WHERE c.adoption_status = ?';
+      whereClause.push('c.adoption_status = ?');
       params.push(status);
+    }
+
+    // 组合WHERE子句
+    if (whereClause.length > 0) {
+      query += ' WHERE ' + whereClause.join(' AND ');
     }
 
     if (sort === 'latest') {
@@ -95,6 +109,7 @@ exports.getCatById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id || null;
+    const userRole = req.user?.role || null;
 
     // 增加浏览量
     await pool.execute('UPDATE cats SET views = views + 1 WHERE id = ?', [id]);
@@ -105,6 +120,12 @@ exports.getCatById = async (req, res) => {
     }
 
     const cat = rows[0];
+
+    // 检查权限：只有管理员或者猫咪的创建人可以查看未审核的猫咪
+    if (cat.status !== 'approved' && userRole !== 'admin' && cat.user_id !== userId) {
+      return res.status(403).json({ error: '权限不足，无法查看此猫咪信息' });
+    }
+
     // 为猫咪添加isLiked字段
     cat.isLiked = false;
 
@@ -130,8 +151,8 @@ exports.getCatById = async (req, res) => {
 exports.getHotCats = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM cats WHERE adoption_status = ? ORDER BY likes DESC, views DESC LIMIT 10',
-      ['available']
+      'SELECT * FROM cats WHERE adoption_status = ? AND status = ? ORDER BY likes DESC, views DESC LIMIT 10',
+      ['available', 'approved']
     );
     res.status(200).json(rows);
   } catch (error) {
@@ -143,8 +164,8 @@ exports.getHotCats = async (req, res) => {
 exports.getLatestAdoption = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM cats WHERE adoption_status = ? ORDER BY created_at DESC LIMIT 10',
-      ['available']
+      'SELECT * FROM cats WHERE adoption_status = ? AND status = ? ORDER BY created_at DESC LIMIT 10',
+      ['available', 'approved']
     );
     res.status(200).json(rows);
   } catch (error) {
@@ -303,6 +324,131 @@ exports.updateAdoptionStatus = async (req, res) => {
     }
     res.status(200).json({ message: 'Adoption status updated successfully' });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 更新猫咪审核状态
+exports.updateCatStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, rejection_reason } = req.body;
+    const userRole = req.user?.role;
+
+    // 检查权限：只有管理员可以更新审核状态
+    if (userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足，只有管理员可以更新审核状态' });
+    }
+
+    // 检查状态值是否有效
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: '无效的状态值，必须是 pending、approved 或 rejected' });
+    }
+
+    // 如果状态为 rejected，必须提供驳回理由
+    if (status === 'rejected' && !rejection_reason) {
+      return res.status(400).json({ error: '驳回状态必须提供驳回理由' });
+    }
+
+    // 构建更新语句
+    let query = 'UPDATE cats SET status = ?';
+    let params = [status];
+
+    // 如果状态为 rejected，添加驳回理由
+    if (status === 'rejected') {
+      query += ', rejection_reason = ?';
+      params.push(rejection_reason);
+    } else {
+      // 如果状态不是 rejected，清空驳回理由
+      query += ', rejection_reason = NULL';
+    }
+
+    query += ' WHERE id = ?';
+    params.push(id);
+
+    const [result] = await pool.execute(query, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Cat not found' });
+    }
+    res.status(200).json({ message: 'Cat status updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// 获取当前用户的猫咪
+exports.getMyCats = async (req, res) => {
+  try {
+    const { page = 1, pageSize = 8, status } = req.query;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    if (!userId) {
+      return res.status(401).json({ error: '请登录' });
+    }
+
+    // 构建查询语句
+    let query = 'SELECT c.*, u.name as user_name FROM cats c LEFT JOIN users u ON c.user_id = u.id';
+    let params = [];
+
+    // 构建WHERE子句
+    let whereClause = [];
+
+    // 如果用户不是管理员，只显示当前用户的猫咪
+    if (userRole !== 'admin') {
+      whereClause.push('c.user_id = ?');
+      params.push(userId);
+    }
+
+    // 添加状态筛选
+    if (status) {
+      whereClause.push('c.status = ?');
+      params.push(status);
+    }
+
+    // 组合WHERE子句
+    if (whereClause.length > 0) {
+      query += ' WHERE ' + whereClause.join(' AND ');
+    }
+
+    query += ' ORDER BY c.created_at DESC';
+
+    const [rows] = await pool.execute(query, params);
+
+    // 为每个猫咪添加isLiked字段
+    const catsWithLiked = rows.map(cat => ({
+      ...cat,
+      isLiked: false
+    }));
+
+    // 查询用户的点赞状态
+    if (userId && catsWithLiked.length > 0) {
+      try {
+        // 获取用户的所有点赞记录
+        const [likeResults] = await pool.execute('SELECT cat_id FROM cat_likes WHERE user_id = ?', [userId]);
+        const likedCatIds = likeResults.map(item => item.cat_id);
+
+        // 更新每个猫咪的isLiked状态
+        catsWithLiked.forEach(cat => {
+          cat.isLiked = likedCatIds.includes(cat.id);
+        });
+      } catch (error) {
+        console.error('Error querying user likes:', error.message);
+        // 发生错误时，保持isLiked为false
+      }
+    }
+
+    res.status(200).json({
+      items: catsWithLiked,
+      pagination: {
+        page: parseInt(page),
+        pageSize: parseInt(pageSize),
+        total: rows.length,
+        totalPages: Math.ceil(rows.length / parseInt(pageSize))
+      }
+    });
+  } catch (error) {
+    console.error('Error in getMyCats:', error.message);
     res.status(500).json({ error: error.message });
   }
 };

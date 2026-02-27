@@ -20,6 +20,7 @@ const upload = multer({ storage: storage });
 
 // 帖子相关路由（全部需要token验证）
 router.get('/posts', authenticate, postController.getPosts);
+router.get('/posts/my', authenticate, postController.getMyPosts);
 router.get('/posts/:id', authenticate, postController.getPostById);
 router.get('/posts/:id/comments', authenticate, commentController.getCommentsByPostId);
 router.post('/posts', authenticate, postController.createPost); // 用于处理没有文件上传的情况
