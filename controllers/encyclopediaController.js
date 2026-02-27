@@ -3,6 +3,8 @@ const pool = require('../config/db');
 // 增加猫咪百科
 exports.createEncyclopedia = async (req, res) => {
   try {
+    // 获取请求体数据
+    const body = req.body || {};
     const {
       scientific_name,
       breed,
@@ -11,9 +13,14 @@ exports.createEncyclopedia = async (req, res) => {
       care_guide,
       behavior_analysis,
       fun_facts,
-      images,
       rarity
-    } = req.body;
+    } = body;
+
+    // 如果有文件上传，使用上传的文件名
+    let images = body.images;
+    if (req.file) {
+      images = req.file.filename;
+    }
 
     // 插入数据
     const [result] = await pool.execute(
@@ -56,6 +63,9 @@ exports.deleteEncyclopedia = async (req, res) => {
 exports.updateEncyclopedia = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // 获取请求体数据
+    const body = req.body || {};
     const {
       scientific_name,
       breed,
@@ -64,9 +74,14 @@ exports.updateEncyclopedia = async (req, res) => {
       care_guide,
       behavior_analysis,
       fun_facts,
-      images,
       rarity
-    } = req.body;
+    } = body;
+
+    // 如果有文件上传，使用上传的文件名
+    let images = body.images;
+    if (req.file) {
+      images = req.file.filename;
+    }
 
     // 检查数据是否存在
     const [rows] = await pool.execute('SELECT * FROM cat_encyclopedias WHERE id = ?', [id]);

@@ -263,6 +263,22 @@ exports.updatePost = async (req, res) => {
 exports.deletePost = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // 检查帖子是否存在
+    const [postRows] = await pool.execute('SELECT user_id FROM posts WHERE id = ?', [id]);
+    if (postRows.length === 0) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const postUserId = postRows[0].user_id;
+
+    // 检查权限：只有创建人或者管理员可以删除
+    if (userId !== postUserId && userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足，只有创建人或管理员可以删除' });
+    }
+
     const [result] = await pool.execute('DELETE FROM posts WHERE id = ?', [id]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Post not found' });

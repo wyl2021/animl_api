@@ -16,7 +16,7 @@ exports.authenticate = async (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET);
 
         const [rows] = await pool.execute(
-            'SELECT id, name, account FROM users WHERE id = ?',
+            'SELECT id, name, account, role FROM users WHERE id = ?',
             [decoded.userId]
         );
 
@@ -33,6 +33,18 @@ exports.authenticate = async (req, res, next) => {
         if (error.name === 'TokenExpiredError') {
             return res.status(401).json({ error: '请登录' });
         }
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// 检查用户是否为超级管理员
+exports.authorizeAdmin = (req, res, next) => {
+    try {
+        if (!req.user || req.user.role !== 'admin') {
+            return res.status(403).json({ error: '权限不足' });
+        }
+        next();
+    } catch (error) {
         res.status(500).json({ error: error.message });
     }
 };

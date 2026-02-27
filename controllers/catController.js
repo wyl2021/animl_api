@@ -5,9 +5,10 @@ exports.createCat = async (req, res) => {
   try {
     const { name, breed, age, age_display, description, adoption_requirements } = req.body;
     const image = req.file ? req.file.filename : null;
+    const user_id = req.user?.id || 1; // 默认使用ID为1的用户
     const [result] = await pool.execute(
-      'INSERT INTO cats (name, breed, age, age_display, description, adoption_requirements, image) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, breed, age, age_display, description, adoption_requirements, image]
+      'INSERT INTO cats (name, breed, age, age_display, description, adoption_requirements, image, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, breed, age, age_display, description, adoption_requirements, image, user_id]
     );
     res.status(201).json({
       id: result.insertId,
@@ -17,7 +18,9 @@ exports.createCat = async (req, res) => {
       age_display,
       description,
       adoption_requirements,
-      image
+      image,
+      user_id,
+      user_name: req.user?.name || '管理员'
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -31,20 +34,20 @@ exports.getCats = async (req, res) => {
     const userId = req.user?.id || null;
 
     // 先测试基本查询，不带分页和点赞验证
-    let query = 'SELECT * FROM cats';
+    let query = 'SELECT c.*, u.name as user_name FROM cats c LEFT JOIN users u ON c.user_id = u.id';
     let params = [];
 
     if (status) {
-      query += ' WHERE adoption_status = ?';
+      query += ' WHERE c.adoption_status = ?';
       params.push(status);
     }
 
     if (sort === 'latest') {
-      query += ' ORDER BY created_at DESC';
+      query += ' ORDER BY c.created_at DESC';
     } else if (sort === 'popular') {
-      query += ' ORDER BY likes DESC, views DESC';
+      query += ' ORDER BY c.likes DESC, c.views DESC';
     } else {
-      query += ' ORDER BY created_at DESC';
+      query += ' ORDER BY c.created_at DESC';
     }
 
     const [rows] = await pool.execute(query, params);
@@ -96,7 +99,7 @@ exports.getCatById = async (req, res) => {
     // 增加浏览量
     await pool.execute('UPDATE cats SET views = views + 1 WHERE id = ?', [id]);
 
-    const [rows] = await pool.execute('SELECT * FROM cats WHERE id = ?', [id]);
+    const [rows] = await pool.execute('SELECT c.*, u.name as user_name FROM cats c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Cat not found' });
     }
@@ -200,6 +203,22 @@ exports.updateCat = async (req, res) => {
 exports.deleteCat = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // 检查猫咪是否存在
+    const [catRows] = await pool.execute('SELECT user_id FROM cats WHERE id = ?', [id]);
+    if (catRows.length === 0) {
+      return res.status(404).json({ error: 'Cat not found' });
+    }
+
+    const catUserId = catRows[0].user_id;
+
+    // 检查权限：只有创建人或者管理员可以删除
+    if (userId !== catUserId && userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足，只有创建人或管理员可以删除' });
+    }
+
     const [result] = await pool.execute('DELETE FROM cats WHERE id = ?', [id]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Cat not found' });
