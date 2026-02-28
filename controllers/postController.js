@@ -21,8 +21,8 @@ exports.createPost = async (req, res) => {
 
     // 插入数据
     const [result] = await pool.execute(
-      'INSERT INTO posts (user_id, cat_id, title, content, image, video, images) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [user_id, cat_id, title, finalContent, image, video, images]
+      'INSERT INTO posts (user_id, cat_id, title, content, image, video, images, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [user_id, cat_id, title, finalContent, image, video, images, 'pending']
     );
 
     // 直接返回包含所有字段的响应对象
@@ -31,6 +31,7 @@ exports.createPost = async (req, res) => {
       user_id,
       cat_id,
       title,
+      status: 'pending',
       likes_count: 0,
       comments_count: 0,
       created_at: new Date(),
@@ -68,16 +69,17 @@ exports.getPosts = async (req, res) => {
     const offset = (page - 1) * limit;
     console.log('分页参数:', { page, limit, offset });
 
-    // 测试简单查询，不涉及用户表
+    // 只查询已审核通过的帖子
     const [rows] = await pool.execute(`
       SELECT p.*, '测试用户' as user_name, '小黑' as cat_name, '孟买猫' as cat_breed
       FROM posts p
+      WHERE p.status = ?
       ORDER BY p.created_at DESC
       LIMIT ${limit} OFFSET ${offset}
-    `);
+    `, ['approved']);
 
     // 查询帖子总数
-    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM posts');
+    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM posts WHERE status = ?', ['approved']);
     const total = countResult[0].total;
     const totalPages = Math.ceil(total / limit);
 
@@ -120,6 +122,7 @@ exports.getPostById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id || null;
+    const userRole = req.user?.role || null;
     const [postRows] = await pool.execute(`
       SELECT p.*, u.name as user_name, c.name as cat_name, c.breed as cat_breed
       FROM posts p
@@ -133,6 +136,12 @@ exports.getPostById = async (req, res) => {
     }
 
     const post = postRows[0];
+
+    // 检查权限：只有管理员或者帖子的创建人可以查看未审核的帖子
+    if (post.status !== 'approved' && userRole !== 'admin' && post.user_id !== userId) {
+      return res.status(403).json({ error: '权限不足，无法查看此帖子信息' });
+    }
+
     post.user_avatar = null; // 添加默认的user_avatar字段
 
     // 查询帖子的点赞状态
@@ -226,9 +235,15 @@ exports.updatePost = async (req, res) => {
 
     // 不需要确保video和images字段有值，允许这些参数为空
 
+    // 如果帖子已经审核通过，更新后需要重新审核
+    let status = post.status;
+    if (status === 'approved') {
+      status = 'pending';
+    }
+
     const [result] = await pool.execute(
-      'UPDATE posts SET title = ?, content = ?, image = ?, video = ?, images = ? WHERE id = ?',
-      [updateData.title, updateData.content, updateData.image, updateData.video, JSON.stringify(updateData.images), id]
+      'UPDATE posts SET title = ?, content = ?, image = ?, video = ?, images = ?, status = ? WHERE id = ?',
+      [updateData.title, updateData.content, updateData.image, updateData.video, JSON.stringify(updateData.images), status, id]
     );
 
     if (result.affectedRows === 0) {
@@ -239,6 +254,7 @@ exports.updatePost = async (req, res) => {
     const response = {
       id,
       ...updateData,
+      status,
       user_id: post.user_id,
       cat_id: post.cat_id,
       likes_count: post.likes_count || 0,
@@ -289,31 +305,104 @@ exports.deletePost = async (req, res) => {
   }
 };
 
+// 更新帖子审核状态
+exports.updatePostStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, rejection_reason } = req.body;
+    const userRole = req.user?.role;
+
+    // 检查权限：只有管理员可以更新审核状态
+    if (userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足，只有管理员可以更新审核状态' });
+    }
+
+    // 检查状态值是否有效
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: '无效的状态值，必须是 pending、approved 或 rejected' });
+    }
+
+    // 如果状态为 rejected，必须提供驳回理由
+    if (status === 'rejected' && !rejection_reason) {
+      return res.status(400).json({ error: '驳回状态必须提供驳回理由' });
+    }
+
+    // 构建更新语句
+    let query = 'UPDATE posts SET status = ?';
+    let params = [status];
+
+    // 如果状态为 rejected，添加驳回理由
+    if (status === 'rejected') {
+      query += ', rejection_reason = ?';
+      params.push(rejection_reason);
+    } else {
+      // 如果状态不是 rejected，清空驳回理由
+      query += ', rejection_reason = NULL';
+    }
+
+    query += ' WHERE id = ?';
+    params.push(id);
+
+    const [result] = await pool.execute(query, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+    res.status(200).json({ message: 'Post status updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // 获取当前用户的帖子
 exports.getMyPosts = async (req, res) => {
   try {
+    const { page = 1, pageSize = 10, status } = req.query;
     const userId = req.user?.id;
-
-    // 获取分页参数
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.pageSize) || 10;
-    const offset = (page - 1) * limit;
+    const userRole = req.user?.role;
 
     if (!userId) {
       return res.status(401).json({ error: '请登录' });
     }
 
-    // 查询当前用户的帖子
-    const [rows] = await pool.execute(`
-      SELECT p.*, '测试用户' as user_name, '小黑' as cat_name, '孟买猫' as cat_breed
-      FROM posts p
-      WHERE p.user_id = ?
-      ORDER BY p.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `, [userId]);
+    // 构建查询语句
+    let query = 'SELECT p.*, \'测试用户\' as user_name, \'小黑\' as cat_name, \'孟买猫\' as cat_breed FROM posts p';
+    let countQuery = 'SELECT COUNT(*) as total FROM posts';
+    let params = [];
+    let countParams = [];
 
-    // 查询帖子总数
-    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM posts WHERE user_id = ?', [userId]);
+    // 构建WHERE子句
+    let whereClause = [];
+
+    // 如果用户不是管理员，只显示当前用户的帖子
+    if (userRole !== 'admin') {
+      whereClause.push('p.user_id = ?');
+      params.push(userId);
+      countParams.push(userId);
+    }
+
+    // 添加状态筛选
+    if (status) {
+      whereClause.push('p.status = ?');
+      params.push(status);
+      countParams.push(status);
+    }
+
+    // 组合WHERE子句
+    if (whereClause.length > 0) {
+      query += ' WHERE ' + whereClause.join(' AND ');
+      countQuery += ' WHERE ' + whereClause.join(' AND ');
+    }
+
+    // 添加分页和排序
+    const limit = parseInt(pageSize);
+    const offset = (parseInt(page) - 1) * limit;
+    query += ' ORDER BY p.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit);
+    params.push(offset);
+
+    // 执行查询
+    const [rows] = await pool.execute(query, params);
+    const [countResult] = await pool.execute(countQuery, countParams);
     const total = countResult[0].total;
     const totalPages = Math.ceil(total / limit);
 
@@ -326,7 +415,7 @@ exports.getMyPosts = async (req, res) => {
     res.status(200).json({
       posts: rows,
       pagination: {
-        page,
+        page: parseInt(page),
         limit,
         total,
         totalPages

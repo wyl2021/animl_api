@@ -26,6 +26,7 @@ router.get('/posts/:id/comments', authenticate, commentController.getCommentsByP
 router.post('/posts', authenticate, postController.createPost); // 用于处理没有文件上传的情况
 router.post('/posts/image', authenticate, upload.single('image'), postController.createPost); // 用于处理有文件上传的情况
 router.put('/posts/:id', authenticate, upload.single('image'), postController.updatePost);
+router.put('/posts/:id/status', authenticate, postController.updatePostStatus);
 router.delete('/posts/:id', authenticate, postController.deletePost);
 
 module.exports = router;
